@@ -1,6 +1,6 @@
 {
   "name": "@mnrdk/memx",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Persistent memory for AI agents - git-backed, branch-per-task, CLI interface",
   "main": "index.js",
   "bin": {
