@@ -191,11 +191,19 @@ function findMemDir(startDir = process.cwd()) {
   // Then check central ~/.mem with index
   if (fs.existsSync(CENTRAL_MEM) && fs.existsSync(path.join(CENTRAL_MEM, '.git'))) {
     const index = loadIndex();
-    const taskBranch = index[startDir];
-    if (taskBranch) {
-      return { memDir: CENTRAL_MEM, isLocal: false, taskBranch };
+    // Exact match first
+    if (index[startDir]) {
+      return { memDir: CENTRAL_MEM, isLocal: false, taskBranch: index[startDir] };
     }
-    // Central exists but no mapping for this dir
+    // Check parent directories (for monorepo/subdirectory usage)
+    let checkDir = startDir;
+    while (checkDir !== path.dirname(checkDir)) {
+      checkDir = path.dirname(checkDir);
+      if (index[checkDir]) {
+        return { memDir: CENTRAL_MEM, isLocal: false, taskBranch: index[checkDir] };
+      }
+    }
+    // Central exists but no mapping for this dir or parents
     return { memDir: CENTRAL_MEM, isLocal: false, taskBranch: null, unmapped: true };
   }
   
