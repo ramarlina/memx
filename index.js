@@ -994,6 +994,61 @@ function handleSkillCommand(args) {
   console.log('');
 }
 
+// ==================== MCP ====================
+
+function startMCPServer(args) {
+  const mcpPath = path.join(__dirname, 'mcp.js');
+  
+  // Pass through args
+  const mcpArgs = args.slice(1);
+  
+  // Run MCP server
+  const { spawn } = require('child_process');
+  const child = spawn('node', [mcpPath, ...mcpArgs], {
+    stdio: 'inherit'
+  });
+  
+  child.on('error', (err) => {
+    console.error(`${c.red}Failed to start MCP server:${c.reset}`, err.message);
+    process.exit(1);
+  });
+  
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
+}
+
+function showMCPConfig() {
+  const mcpPath = path.join(__dirname, 'mcp.js');
+  
+  console.log(`\n${c.bold}MCP Server Configuration${c.reset}\n`);
+  console.log(`Add to your Claude Desktop config (${c.dim}~/Library/Application Support/Claude/claude_desktop_config.json${c.reset}):\n`);
+  
+  const config = {
+    "mcpServers": {
+      "mem": {
+        "command": "node",
+        "args": [mcpPath]
+      }
+    }
+  };
+  
+  console.log(JSON.stringify(config, null, 2));
+  console.log(`\n${c.dim}Or for a specific project:${c.reset}\n`);
+  
+  const configWithDir = {
+    "mcpServers": {
+      "mem": {
+        "command": "node",
+        "args": [mcpPath, "--dir", "/path/to/your/project"]
+      }
+    }
+  };
+  
+  console.log(JSON.stringify(configWithDir, null, 2));
+  console.log('');
+}
+
 // ==================== HELP ====================
 
 function showHelp() {
@@ -1037,9 +1092,11 @@ ${c.bold}PRIMITIVES${c.reset}
   append <list> <item>    Append to list
   log                     Raw git log
 
-${c.bold}SKILL${c.reset}
+${c.bold}INTEGRATION${c.reset}
   skill                   View LLM skill
   skill install           Install skill to Claude/Gemini
+  mcp                     Start MCP server (stdio)
+  mcp config              Show MCP config for Claude Desktop
 
 ${c.bold}EXAMPLES${c.reset}
   mem init build-landing "Create landing page for repr.dev"
@@ -1149,6 +1206,15 @@ async function main() {
     // Skill
     case 'skill':
       handleSkillCommand(args);
+      break;
+    
+    // MCP
+    case 'mcp':
+      if (cmdArgs[0] === 'config') {
+        showMCPConfig();
+      } else {
+        startMCPServer(args);
+      }
       break;
       
     default:
