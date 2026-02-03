@@ -765,20 +765,184 @@ function cmdTasks(memDir) {
     return;
   }
 
-  const current = getCurrentBranch(memDir);
-  const branches = git(memDir, 'branch', '--list').split('\n');
-  
-  console.log(`\n${c.bold}Tasks${c.reset}\n`);
-  
-  branches.forEach(b => {
-    const name = b.replace('*', '').trim();
-    const isCurrent = b.includes('*');
-    const marker = isCurrent ? `${c.green}→${c.reset}` : ' ';
-    const display = name.replace('task/', '');
-    console.log(`${marker} ${isCurrent ? c.cyan : c.dim}${display}${c.reset}`);
+  const currentBranch = getCurrentBranch(memDir);
+  const branches = git(memDir, 'branch', '--list').split('\n')
+    .map(b => b.replace('*', '').trim())
+    .filter(b => b && b !== 'main' && b !== 'master');
+
+  if (branches.length === 0) {
+    console.log(`${c.yellow}No tasks found${c.reset}`);
+    return;
+  }
+
+  // Load task info
+  const tasks = branches.map(branch => {
+    const taskName = branch.replace('task/', '');
+    let status = 'active';
+    let progress = '—';
+    let goal = '';
+
+    try {
+      git(memDir, 'checkout', branch);
+      const stateFile = path.join(memDir, 'state.md');
+      const goalFile = path.join(memDir, 'goal.md');
+
+      if (fs.existsSync(stateFile)) {
+        const state = fs.readFileSync(stateFile, 'utf8');
+        if (state.includes('status: done')) status = 'done';
+        else if (state.includes('status: blocked')) status = 'blocked';
+      }
+
+      if (fs.existsSync(goalFile)) {
+        const goalContent = fs.readFileSync(goalFile, 'utf8');
+        const progressMatch = goalContent.match(/Progress:\s*(\d+)%/i);
+        if (progressMatch) progress = `${progressMatch[1]}%`;
+
+        const goalMatch = goalContent.match(/^#\s*Goal\s*\n+([^\n#]+)/m);
+        if (goalMatch) goal = goalMatch[1].trim().slice(0, 50);
+      }
+    } catch {}
+
+    return { branch, taskName, status, progress, goal, isCurrent: branch === currentBranch };
   });
-  
-  console.log('');
+
+  // Restore original branch
+  try { git(memDir, 'checkout', currentBranch); } catch {}
+
+  // Non-interactive if not TTY
+  if (!process.stdin.isTTY) {
+    console.log(`${c.bold}Tasks${c.reset}\n`);
+    tasks.forEach(t => {
+      const marker = t.isCurrent ? `${c.green}→${c.reset}` : ' ';
+      const statusIcon = t.status === 'done' ? `${c.dim}✓${c.reset}`
+                       : t.status === 'blocked' ? `${c.yellow}○${c.reset}`
+                       : `${c.green}●${c.reset}`;
+      console.log(`${marker} ${statusIcon} ${t.taskName}  ${c.dim}${t.progress}${c.reset}`);
+    });
+    return;
+  }
+
+  // Interactive mode
+  let selectedIdx = tasks.findIndex(t => t.isCurrent);
+  if (selectedIdx < 0) selectedIdx = 0;
+  let inDetailView = false;
+
+  const clearScreen = () => process.stdout.write('\x1b[2J\x1b[H');
+  const hideCursor = () => process.stdout.write('\x1b[?25l');
+  const showCursor = () => process.stdout.write('\x1b[?25h');
+
+  const renderList = () => {
+    clearScreen();
+    console.log(`${c.bold}Tasks${c.reset}\n`);
+
+    tasks.forEach((task, idx) => {
+      const selected = idx === selectedIdx;
+      const prefix = selected ? `${c.cyan}❯${c.reset}` : ' ';
+      const statusIcon = task.status === 'done' ? `${c.dim}✓${c.reset}`
+                       : task.status === 'blocked' ? `${c.yellow}○${c.reset}`
+                       : `${c.green}●${c.reset}`;
+      const current = task.isCurrent ? ` ${c.green}(current)${c.reset}` : '';
+      const name = selected ? `${c.bold}${task.taskName}${c.reset}` : task.taskName;
+      const progressText = task.progress !== '—' ? ` ${c.green}${task.progress}${c.reset}` : '';
+
+      console.log(`${prefix} ${statusIcon} ${name}${progressText}${current}`);
+    });
+
+    console.log(`\n${c.dim}↑/↓ select · enter view · s switch · d done · x delete · q quit${c.reset}`);
+  };
+
+  const renderDetail = () => {
+    clearScreen();
+    const task = tasks[selectedIdx];
+    const statusColor = task.status === 'done' ? c.dim
+                      : task.status === 'blocked' ? c.yellow
+                      : c.green;
+
+    console.log(`${c.bold}${c.cyan}${task.taskName}${c.reset}${task.isCurrent ? ` ${c.green}(current)${c.reset}` : ''}\n`);
+    console.log(`  ${c.dim}Status:${c.reset}   ${statusColor}${task.status}${c.reset}`);
+    console.log(`  ${c.dim}Progress:${c.reset} ${task.progress !== '—' ? c.green + task.progress + c.reset : c.dim + '—' + c.reset}`);
+    if (task.goal) console.log(`  ${c.dim}Goal:${c.reset}     ${task.goal}`);
+
+    console.log(`\n${c.dim}esc back · s switch · d done · x delete · q quit${c.reset}`);
+  };
+
+  const render = () => inDetailView ? renderDetail() : renderList();
+
+  const doAction = (action) => {
+    const task = tasks[selectedIdx];
+    showCursor();
+    clearScreen();
+
+    if (action === 'switch') {
+      try {
+        git(memDir, 'checkout', task.branch);
+        console.log(`${c.green}✓${c.reset} Switched to: ${c.bold}${task.taskName}${c.reset}`);
+      } catch (err) {
+        console.log(`${c.red}Error:${c.reset} ${err.message}`);
+      }
+      process.exit(0);
+    } else if (action === 'done') {
+      try {
+        git(memDir, 'checkout', task.branch);
+        const stateFile = path.join(memDir, 'state.md');
+        if (fs.existsSync(stateFile)) {
+          let state = fs.readFileSync(stateFile, 'utf8');
+          state = state.replace(/^status:\s*.+$/m, 'status: done');
+          fs.writeFileSync(stateFile, state);
+          git(memDir, 'add', 'state.md');
+          git(memDir, 'commit', '-m', 'done: marked complete');
+        }
+        console.log(`${c.green}✓${c.reset} Marked ${c.bold}${task.taskName}${c.reset} done`);
+      } catch (err) {
+        console.log(`${c.red}Error:${c.reset} ${err.message}`);
+      }
+      process.exit(0);
+    } else if (action === 'delete') {
+      try {
+        if (task.isCurrent) {
+          git(memDir, 'checkout', 'main');
+        }
+        git(memDir, 'branch', '-D', task.branch);
+        console.log(`${c.red}✗${c.reset} Deleted ${c.bold}${task.taskName}${c.reset}`);
+      } catch (err) {
+        console.log(`${c.red}Error:${c.reset} ${err.message}`);
+      }
+      process.exit(0);
+    }
+  };
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  hideCursor();
+  render();
+
+  process.stdin.on('data', (key) => {
+    const k = key.toString();
+
+    if (k === 'q' || k === '\x03') {
+      showCursor();
+      clearScreen();
+      process.exit(0);
+    } else if (k === '\x1b[A') { // up
+      selectedIdx = Math.max(0, selectedIdx - 1);
+      render();
+    } else if (k === '\x1b[B') { // down
+      selectedIdx = Math.min(tasks.length - 1, selectedIdx + 1);
+      render();
+    } else if (k === '\r' || k === '\n') { // enter
+      inDetailView = true;
+      render();
+    } else if (k === '\x1b' || k === '\x1b[D') { // esc or left
+      inDetailView = false;
+      render();
+    } else if (k === 's') {
+      doAction('switch');
+    } else if (k === 'd') {
+      doAction('done');
+    } else if (k === 'x') {
+      doAction('delete');
+    }
+  });
 }
 
 // Switch task
