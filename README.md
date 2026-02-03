@@ -152,6 +152,21 @@ mem cron export
 
 ## For AI Agents
 
+### Claude Code Plugin
+
+Install as a Claude Code plugin for automatic skill loading and slash commands:
+
+```bash
+claude plugin install github:ramarlina/memx
+```
+
+This adds:
+- **Skill**: Claude learns how to use mem automatically
+- **MCP Server**: Direct tool access
+- **Commands**: `/mem:status`, `/mem:checkpoint`, `/mem:context`
+
+### Manual Setup
+
 Install the skill so LLMs know how to use mem:
 
 ```bash
