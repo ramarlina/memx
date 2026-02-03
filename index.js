@@ -222,10 +222,95 @@ function serializeFrontmatter(frontmatter, body) {
 
 // ==================== COMMANDS ====================
 
+// Interactive onboarding
+async function interactiveInit() {
+  console.log(`\n${c.bold}${c.cyan}mem${c.reset} ${c.dim}— persistent memory for AI agents${c.reset}\n`);
+  console.log(`No ${c.cyan}.mem${c.reset} found. Let's set one up!\n`);
+  
+  // Get goal
+  const goalText = await prompt(`${c.bold}What are you working on?${c.reset}\n> `);
+  if (!goalText) {
+    console.log(`${c.dim}Cancelled${c.reset}`);
+    return;
+  }
+  
+  // Generate task name from goal
+  const name = goalText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .slice(0, 3)
+    .join('-');
+  
+  console.log(`\n${c.bold}How will you know it's done?${c.reset} ${c.dim}(add criteria, empty line to finish)${c.reset}\n`);
+  
+  const criteria = [];
+  let i = 1;
+  while (true) {
+    const criterion = await prompt(`${c.dim}${i}.${c.reset} `);
+    if (!criterion) break;
+    criteria.push(criterion);
+    i++;
+  }
+  
+  // Create .mem directory
+  const targetDir = path.join(process.cwd(), '.mem');
+  fs.mkdirSync(targetDir, { recursive: true });
+  
+  try {
+    require('child_process').execSync('git init', { cwd: targetDir, stdio: 'ignore' });
+    
+    // Create playbook on main
+    writeMemFile(targetDir, 'playbook.md', `# Playbook\n\nGlobal learnings that transfer across tasks.\n`);
+    writeMemFile(targetDir, '.gitignore', '');
+    
+    git(targetDir, 'add', '-A');
+    git(targetDir, 'commit', '-m', 'init: memory repo');
+    
+    // Create task branch
+    const branch = `task/${name}`;
+    git(targetDir, 'checkout', '-b', branch);
+    
+    // Build criteria markdown
+    const criteriaText = criteria.length 
+      ? criteria.map(c => `- [ ] ${c}`).join('\n')
+      : '- [ ] Define your first criterion';
+    
+    writeMemFile(targetDir, 'goal.md', serializeFrontmatter(
+      { task: name, created: new Date().toISOString().split('T')[0] },
+      `# Goal\n\n${goalText}\n\n## Definition of Done\n\n${criteriaText}\n\n## Progress: 0%`
+    ));
+    writeMemFile(targetDir, 'state.md', serializeFrontmatter(
+      { status: 'active' },
+      `# State\n\n## Next Step\n\nDefine approach\n\n## Checkpoints\n\n- [ ] Started`
+    ));
+    writeMemFile(targetDir, 'memory.md', `# Learnings\n\n`);
+    
+    git(targetDir, 'add', '-A');
+    git(targetDir, 'commit', '-m', `init: ${name}`);
+    
+    console.log(`\n${c.green}✓${c.reset} Created ${c.cyan}.mem/${c.reset}`);
+    console.log(`${c.green}✓${c.reset} Task: ${c.bold}${name}${c.reset}`);
+    if (criteria.length) {
+      console.log(`${c.green}✓${c.reset} ${criteria.length} success criteria defined`);
+    }
+    console.log(`\n${c.dim}Run ${c.reset}mem status${c.dim} to see your progress${c.reset}\n`);
+    
+  } catch (err) {
+    console.log(`${c.red}Error:${c.reset} ${err.message}`);
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+}
+
 // Initialize a new memory repo
 async function cmdInit(args, memDir) {
   const name = args[0];
   const goal = args.slice(1).join(' ');
+  
+  // Interactive mode if no args and no existing .mem
+  if (!name && !memDir) {
+    return await interactiveInit();
+  }
   
   if (!name) {
     console.log(`${c.red}Usage:${c.reset} mem init <name> "<goal>"`);
@@ -1256,7 +1341,20 @@ async function main() {
   // Find .mem repo
   const memDir = findMemDir();
   
-  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  // No command and no .mem? Start interactive onboarding
+  if (!cmd && !memDir) {
+    await interactiveInit();
+    return;
+  }
+  
+  // No command but has .mem? Show status
+  if (!cmd && memDir) {
+    cmdStatus(memDir);
+    console.log(`${c.dim}Run ${c.reset}mem help${c.dim} for all commands${c.reset}\n`);
+    return;
+  }
+  
+  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     showHelp();
     return;
   }
