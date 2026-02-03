@@ -1,0 +1,27 @@
+{
+  "name": "@mnrdk/memx",
+  "version": "0.1.0",
+  "description": "Persistent memory for AI agents - git-backed, branch-per-task, CLI interface",
+  "main": "index.js",
+  "bin": {
+    "mem": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "memory",
+    "cli",
+    "persistent",
+    "llm",
+    "context"
+  ],
+  "author": "mnrdk",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ramarlina/memx"
+  }
+}
