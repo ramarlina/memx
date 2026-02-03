@@ -938,6 +938,164 @@ function cmdPlaybook(memDir) {
   }
 }
 
+// List learnings with IDs
+function cmdLearnings(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const isGlobal = args[0] === '-g';
+  const filename = isGlobal ? 'playbook.md' : 'memory.md';
+  const content = readMemFile(memDir, filename) || '';
+  
+  const lines = content.split('\n').filter(l => l.startsWith('- '));
+  
+  if (lines.length === 0) {
+    console.log(`${c.dim}No learnings yet${c.reset}`);
+    return;
+  }
+
+  console.log(`\n${c.bold}${isGlobal ? 'Playbook' : 'Task Learnings'}${c.reset}\n`);
+  
+  lines.forEach((line, i) => {
+    // Parse: "- YYYY-MM-DD: text" or just "- text"
+    const match = line.match(/^- (?:(\d{4}-\d{2}-\d{2}): )?(.+)$/);
+    if (match) {
+      const date = match[1] ? `${c.dim}${match[1]}${c.reset} ` : '';
+      console.log(`  ${c.cyan}${i + 1}.${c.reset} ${date}${match[2]}`);
+    }
+  });
+  
+  if (!isGlobal) {
+    console.log(`\n${c.dim}Promote with: mem promote <number>${c.reset}`);
+  }
+  console.log('');
+}
+
+// Promote a learning to playbook
+function cmdPromote(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const num = parseInt(args[0]);
+  if (!num) {
+    console.log(`${c.red}Usage:${c.reset} mem promote <number>`);
+    console.log(`${c.dim}Run 'mem learnings' to see numbered list${c.reset}`);
+    return;
+  }
+
+  const memory = readMemFile(memDir, 'memory.md') || '';
+  const lines = memory.split('\n').filter(l => l.startsWith('- '));
+  
+  if (num < 1 || num > lines.length) {
+    console.log(`${c.red}Invalid number.${c.reset} You have ${lines.length} learnings.`);
+    return;
+  }
+
+  const learning = lines[num - 1];
+  
+  // Add to playbook
+  const playbook = readMemFile(memDir, 'playbook.md') || '# Playbook\n\n';
+  const newPlaybook = playbook + learning + '\n';
+  writeMemFile(memDir, 'playbook.md', newPlaybook);
+  
+  git(memDir, 'add', 'playbook.md');
+  git(memDir, 'commit', '-m', `promote: ${learning.slice(2, 50)}`);
+  
+  // Extract just the text for display
+  const text = learning.match(/^- (?:\d{4}-\d{2}-\d{2}: )?(.+)$/)?.[1] || learning;
+  console.log(`${c.green}✓${c.reset} Promoted to playbook: "${text}"`);
+}
+
+// Manage constraints
+function cmdConstraint(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const action = args[0];
+  const text = args.slice(1).join(' ');
+  
+  let goal = readMemFile(memDir, 'goal.md') || '';
+  
+  // Ensure Constraints section exists
+  if (!goal.includes('## Constraints')) {
+    goal = goal.trimEnd() + '\n\n## Constraints\n\n';
+  }
+
+  // List constraints
+  if (!action || action === 'list') {
+    const match = goal.match(/## Constraints\n\n([\s\S]*?)(?=\n## |$)/);
+    if (match) {
+      const lines = match[1].trim().split('\n').filter(l => l.startsWith('- '));
+      if (lines.length) {
+        console.log(`\n${c.bold}Constraints${c.reset}\n`);
+        lines.forEach((line, i) => {
+          console.log(`  ${c.cyan}${i + 1}.${c.reset} ${line.slice(2)}`);
+        });
+        console.log('');
+        return;
+      }
+    }
+    console.log(`${c.dim}No constraints set${c.reset}`);
+    console.log(`${c.dim}Add with: mem constraint add "Don't push without review"${c.reset}`);
+    return;
+  }
+
+  // Add constraint
+  if (action === 'add' && text) {
+    goal = goal.replace(
+      /## Constraints\n\n/,
+      `## Constraints\n\n- ${text}\n`
+    );
+    writeMemFile(memDir, 'goal.md', goal);
+    git(memDir, 'add', 'goal.md');
+    git(memDir, 'commit', '-m', `constraint: ${text.slice(0, 40)}`);
+    console.log(`${c.green}✓${c.reset} Constraint added: ${text}`);
+    return;
+  }
+
+  // Remove constraint
+  if ((action === 'remove' || action === 'rm') && text) {
+    const num = parseInt(text);
+    const match = goal.match(/## Constraints\n\n([\s\S]*?)(?=\n## |$)/);
+    if (match) {
+      const lines = match[1].split('\n');
+      let constraintIndex = 0;
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('- ')) {
+          constraintIndex++;
+          if (constraintIndex === num) {
+            const removed = lines[i].slice(2);
+            lines.splice(i, 1);
+            goal = goal.replace(match[0], `## Constraints\n\n${lines.join('\n')}`);
+            writeMemFile(memDir, 'goal.md', goal);
+            git(memDir, 'add', 'goal.md');
+            git(memDir, 'commit', '-m', `remove constraint: ${removed.slice(0, 30)}`);
+            console.log(`${c.green}✓${c.reset} Removed: ${removed}`);
+            return;
+          }
+        }
+      }
+    }
+    console.log(`${c.red}Constraint #${num} not found${c.reset}`);
+    return;
+  }
+
+  // Usage
+  console.log(`${c.bold}mem constraint${c.reset} - Manage task constraints\n`);
+  console.log(`${c.dim}Commands:${c.reset}`);
+  console.log(`  ${c.cyan}mem constraint${c.reset}              List constraints`);
+  console.log(`  ${c.cyan}mem constraint add "..."${c.reset}    Add constraint`);
+  console.log(`  ${c.cyan}mem constraint remove <n>${c.reset}   Remove by number`);
+  console.log('');
+}
+
 // Show/update progress
 function cmdProgress(args, memDir) {
   if (!memDir) {
@@ -1511,8 +1669,12 @@ ${c.bold}PROGRESS${c.reset}
 
 ${c.bold}LEARNING${c.reset}
   learn [-g] "<insight>"  Add learning (-g for global)
-  playbook                View global learnings
-  promote <id>            Promote local → global
+  learnings [-g]          List learnings with IDs
+  playbook                View global playbook
+  promote <n>             Promote learning #n to playbook
+  constraint add "..."    Add constraint/boundary
+  constraint remove <n>   Remove constraint
+  constraints             List constraints
 
 ${c.bold}PROGRESS${c.reset}
   progress                Show progress % against Definition of Done
@@ -1619,9 +1781,20 @@ async function main() {
     case 'learn':
       cmdLearn(cmdArgs, memDir);
       break;
+    case 'learnings':
+    case 'ls-learn':
+      cmdLearnings(cmdArgs, memDir);
+      break;
     case 'playbook':
     case 'pb':
       cmdPlaybook(memDir);
+      break;
+    case 'promote':
+      cmdPromote(cmdArgs, memDir);
+      break;
+    case 'constraint':
+    case 'constraints':
+      cmdConstraint(cmdArgs, memDir);
       break;
     
     // Progress
