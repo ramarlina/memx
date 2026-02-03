@@ -242,7 +242,7 @@ async function cmdInit(args, memDir) {
       if (goal) {
         writeMemFile(memDir, 'goal.md', serializeFrontmatter(
           { task: name, created: new Date().toISOString().split('T')[0] },
-          `# Goal\n\n${goal}`
+          `# Goal\n\n${goal}\n\n## Definition of Done\n\n- [ ] Define success criteria\n\n## Progress: 0%`
         ));
         writeMemFile(memDir, 'state.md', serializeFrontmatter(
           { status: 'active' },
@@ -290,7 +290,7 @@ async function cmdInit(args, memDir) {
       
       writeMemFile(targetDir, 'goal.md', serializeFrontmatter(
         { task: name, created: new Date().toISOString().split('T')[0] },
-        `# Goal\n\n${goal || 'Define your goal here'}`
+        `# Goal\n\n${goal || 'Define your goal here'}\n\n## Definition of Done\n\n- [ ] Criterion 1\n- [ ] Criterion 2\n- [ ] Criterion 3\n\n## Progress: 0%`
       ));
       writeMemFile(targetDir, 'state.md', serializeFrontmatter(
         { status: 'active' },
@@ -790,6 +790,138 @@ function cmdPlaybook(memDir) {
   }
 }
 
+// Show/update progress
+function cmdProgress(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const goal = readMemFile(memDir, 'goal.md');
+  if (!goal) {
+    console.log(`${c.dim}No goal.md found${c.reset}`);
+    return;
+  }
+
+  // Count checkboxes in Definition of Done section
+  const doneSection = goal.match(/## Definition of Done\n\n([\s\S]*?)(?=\n## |$)/);
+  
+  if (!doneSection) {
+    console.log(`${c.yellow}No "Definition of Done" section found in goal.md${c.reset}`);
+    console.log(`${c.dim}Add a section like:\n\n## Definition of Done\n\n- [ ] Criterion 1\n- [x] Criterion 2${c.reset}`);
+    return;
+  }
+
+  const checkboxes = doneSection[1].match(/- \[[ x]\]/g) || [];
+  const checked = (doneSection[1].match(/- \[x\]/g) || []).length;
+  const total = checkboxes.length;
+  
+  if (total === 0) {
+    console.log(`${c.yellow}No criteria defined yet${c.reset}`);
+    return;
+  }
+
+  const percent = Math.round((checked / total) * 100);
+  
+  // Visual progress bar
+  const barWidth = 20;
+  const filled = Math.round((percent / 100) * barWidth);
+  const empty = barWidth - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  
+  console.log(`\n${c.bold}Progress${c.reset}\n`);
+  console.log(`${c.cyan}${bar}${c.reset} ${percent}%`);
+  console.log(`${c.dim}${checked}/${total} criteria complete${c.reset}\n`);
+  
+  // Show criteria
+  const lines = doneSection[1].trim().split('\n');
+  lines.forEach(line => {
+    if (line.startsWith('- [x]')) {
+      console.log(`${c.green}✓${c.reset} ${line.slice(6)}`);
+    } else if (line.startsWith('- [ ]')) {
+      console.log(`${c.dim}○${c.reset} ${line.slice(6)}`);
+    }
+  });
+  
+  console.log('');
+  
+  // Update progress in goal.md if it has a Progress line
+  if (goal.includes('## Progress:')) {
+    const updatedGoal = goal.replace(/## Progress: \d+%/, `## Progress: ${percent}%`);
+    if (updatedGoal !== goal) {
+      writeMemFile(memDir, 'goal.md', updatedGoal);
+      git(memDir, 'add', 'goal.md');
+      git(memDir, 'commit', '-m', `progress: ${percent}%`);
+    }
+  }
+}
+
+// Mark a criterion as done
+function cmdCriteria(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const action = args[0]; // 'add', 'check', or number
+  const text = args.slice(1).join(' ');
+  
+  let goal = readMemFile(memDir, 'goal.md');
+  if (!goal) {
+    console.log(`${c.dim}No goal.md found${c.reset}`);
+    return;
+  }
+
+  if (action === 'add' && text) {
+    // Add new criterion
+    goal = goal.replace(
+      /## Definition of Done\n\n/,
+      `## Definition of Done\n\n- [ ] ${text}\n`
+    );
+    writeMemFile(memDir, 'goal.md', goal);
+    git(memDir, 'add', 'goal.md');
+    git(memDir, 'commit', '-m', `criteria: add "${text.slice(0, 30)}"`);
+    console.log(`${c.green}✓${c.reset} Added criterion: ${text}`);
+    return;
+  }
+
+  if (action === 'check' || !isNaN(parseInt(action))) {
+    // Check off a criterion by number
+    const num = action === 'check' ? parseInt(text) : parseInt(action);
+    
+    const lines = goal.split('\n');
+    let criteriaIndex = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('- [ ]')) {
+        criteriaIndex++;
+        if (criteriaIndex === num) {
+          lines[i] = lines[i].replace('- [ ]', '- [x]');
+          break;
+        }
+      }
+    }
+    
+    goal = lines.join('\n');
+    writeMemFile(memDir, 'goal.md', goal);
+    git(memDir, 'add', 'goal.md');
+    git(memDir, 'commit', '-m', `criteria: complete #${num}`);
+    console.log(`${c.green}✓${c.reset} Marked criterion #${num} complete`);
+    
+    // Show updated progress
+    cmdProgress([], memDir);
+    return;
+  }
+
+  // Show usage
+  console.log(`${c.bold}mem criteria${c.reset} - Manage success criteria\n`);
+  console.log(`${c.dim}Commands:${c.reset}`);
+  console.log(`  ${c.cyan}mem criteria add "<text>"${c.reset}  Add new criterion`);
+  console.log(`  ${c.cyan}mem criteria check <n>${c.reset}    Mark criterion #n complete`);
+  console.log(`  ${c.cyan}mem criteria <n>${c.reset}          Same as check`);
+  console.log('');
+}
+
 // ==================== PRIMITIVES ====================
 
 function cmdSet(args, memDir) {
@@ -1074,6 +1206,11 @@ ${c.bold}LEARNING${c.reset}
   playbook                View global learnings
   promote <id>            Promote local → global
 
+${c.bold}PROGRESS${c.reset}
+  progress                Show progress % against Definition of Done
+  criteria add "<text>"   Add success criterion
+  criteria <n>            Mark criterion #n complete
+
 ${c.bold}QUERY${c.reset}
   context                 Full hydration for agent wake
   history                 Task progression
@@ -1158,6 +1295,17 @@ async function main() {
     case 'playbook':
     case 'pb':
       cmdPlaybook(memDir);
+      break;
+    
+    // Progress
+    case 'progress':
+    case 'prog':
+    case '%':
+      cmdProgress(cmdArgs, memDir);
+      break;
+    case 'criteria':
+    case 'crit':
+      cmdCriteria(cmdArgs, memDir);
       break;
       
     // Query
