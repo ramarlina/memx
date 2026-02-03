@@ -3,7 +3,7 @@
 Persistent memory for AI agents. Git-backed, branch-per-task, CLI interface.
 
 ```bash
-npm install -g @mnrdk/memx
+npm install -g @mndrk/memx
 ```
 
 ## Quick Start
