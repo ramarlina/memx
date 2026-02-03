@@ -294,11 +294,74 @@ async function interactiveInit() {
     if (criteria.length) {
       console.log(`${c.green}✓${c.reset} ${criteria.length} success criteria defined`);
     }
+    
+    // Offer remote sync setup
+    const wantRemote = await prompt(`\n${c.bold}Sync to GitHub?${c.reset} ${c.dim}(keeps memory backed up + shareable)${c.reset} [y/N]: `);
+    
+    if (wantRemote.toLowerCase() === 'y' || wantRemote.toLowerCase() === 'yes') {
+      await setupRemote(targetDir, name);
+    }
+    
     console.log(`\n${c.dim}Run ${c.reset}mem status${c.dim} to see your progress${c.reset}\n`);
     
   } catch (err) {
     console.log(`${c.red}Error:${c.reset} ${err.message}`);
     fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+}
+
+// Setup git remote
+async function setupRemote(memDir, taskName) {
+  // Check if gh CLI is available
+  let hasGh = false;
+  try {
+    require('child_process').execSync('which gh', { stdio: 'ignore' });
+    hasGh = true;
+  } catch {}
+  
+  const existingRepo = await prompt(`\n${c.dim}GitHub repo URL (leave empty to create new):${c.reset} `);
+  
+  if (existingRepo) {
+    // Connect to existing repo
+    try {
+      git(memDir, 'remote', 'add', 'origin', existingRepo);
+      git(memDir, 'push', '-u', 'origin', 'main');
+      git(memDir, 'push', '-u', 'origin', `task/${taskName}`);
+      console.log(`${c.green}✓${c.reset} Connected to ${c.dim}${existingRepo}${c.reset}`);
+    } catch (err) {
+      console.log(`${c.yellow}Could not connect:${c.reset} ${err.message}`);
+      console.log(`${c.dim}You can set it up later with: cd .mem && git remote add origin <url>${c.reset}`);
+    }
+    return;
+  }
+  
+  if (!hasGh) {
+    console.log(`${c.yellow}GitHub CLI (gh) not found.${c.reset}`);
+    console.log(`${c.dim}Install it to auto-create repos: brew install gh${c.reset}`);
+    console.log(`${c.dim}Or set up manually: cd .mem && git remote add origin <url>${c.reset}`);
+    return;
+  }
+  
+  // Create new repo with gh
+  const repoName = await prompt(`${c.dim}Repo name${c.reset} [${taskName}-mem]: `) || `${taskName}-mem`;
+  const isPrivate = await prompt(`${c.dim}Private repo?${c.reset} [Y/n]: `);
+  const visibility = (isPrivate.toLowerCase() === 'n') ? '--public' : '--private';
+  
+  try {
+    const { execSync } = require('child_process');
+    execSync(`gh repo create ${repoName} ${visibility} --source=. --push`, {
+      cwd: memDir,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    // Also push the task branch
+    git(memDir, 'push', '-u', 'origin', `task/${taskName}`);
+    
+    console.log(`${c.green}✓${c.reset} Created repo: ${c.cyan}${repoName}${c.reset}`);
+    console.log(`${c.dim}Run ${c.reset}mem sync${c.dim} anytime to push/pull${c.reset}`);
+  } catch (err) {
+    console.log(`${c.yellow}Could not create repo:${c.reset} ${err.message}`);
+    console.log(`${c.dim}You can set it up later manually${c.reset}`);
   }
 }
 
