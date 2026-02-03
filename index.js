@@ -1274,6 +1274,166 @@ function handleSkillCommand(args) {
   console.log('');
 }
 
+// ==================== WAKE ====================
+
+// Parse wake pattern to cron expression
+function parseWakeToCron(pattern) {
+  pattern = pattern.toLowerCase().trim();
+  
+  // Handle intervals: every Xm, every Xh
+  const intervalMatch = pattern.match(/^every\s+(\d+)\s*(m|min|minutes?|h|hr|hours?)$/);
+  if (intervalMatch) {
+    const num = parseInt(intervalMatch[1]);
+    const unit = intervalMatch[2][0];
+    if (unit === 'm') {
+      return `*/${num} * * * *`;
+    } else if (unit === 'h') {
+      return `0 */${num} * * *`;
+    }
+  }
+  
+  // Handle daily: Xam daily, Xpm daily, every day at X
+  const dailyMatch = pattern.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:daily|every\s*day)?$/);
+  if (dailyMatch) {
+    let hour = parseInt(dailyMatch[1]);
+    const min = dailyMatch[2] ? parseInt(dailyMatch[2]) : 0;
+    const ampm = dailyMatch[3];
+    if (ampm === 'pm' && hour < 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+    return `${min} ${hour} * * *`;
+  }
+  
+  // Handle weekly: monday 9am, every tuesday at 3pm
+  const weeklyMatch = pattern.match(/^(?:every\s+)?(mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (weeklyMatch) {
+    const days = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const day = days[weeklyMatch[1]];
+    let hour = parseInt(weeklyMatch[2]);
+    const min = weeklyMatch[3] ? parseInt(weeklyMatch[3]) : 0;
+    const ampm = weeklyMatch[4];
+    if (ampm === 'pm' && hour < 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+    return `${min} ${hour} * * ${day}`;
+  }
+  
+  // Already cron format? Pass through
+  if (pattern.match(/^[\d\*\/\-\,]+\s+[\d\*\/\-\,]+\s+[\d\*\/\-\,]+\s+[\d\*\/\-\,]+\s+[\d\*\/\-\,]+$/)) {
+    return pattern;
+  }
+  
+  return null;
+}
+
+// Set/get/clear wake
+function cmdWake(args, memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const state = readMemFile(memDir, 'state.md') || '';
+  const { frontmatter, body } = parseFrontmatter(state);
+
+  // No args: show current wake
+  if (args.length === 0) {
+    if (frontmatter.wake) {
+      console.log(`${c.bold}Wake:${c.reset} ${frontmatter.wake}`);
+      if (frontmatter.wake_command) {
+        console.log(`${c.bold}Command:${c.reset} ${frontmatter.wake_command}`);
+      }
+      const cron = parseWakeToCron(frontmatter.wake);
+      if (cron) {
+        console.log(`${c.dim}Cron: ${cron}${c.reset}`);
+      }
+    } else {
+      console.log(`${c.dim}No wake set${c.reset}`);
+      console.log(`${c.dim}Usage: mem wake "every 15m" [--run "command"]${c.reset}`);
+    }
+    return;
+  }
+
+  // Clear wake
+  if (args[0] === 'clear') {
+    delete frontmatter.wake;
+    delete frontmatter.wake_command;
+    writeMemFile(memDir, 'state.md', serializeFrontmatter(frontmatter, body));
+    git(memDir, 'add', 'state.md');
+    git(memDir, 'commit', '-m', 'wake: clear');
+    console.log(`${c.green}✓${c.reset} Wake cleared`);
+    return;
+  }
+
+  // Set wake
+  let pattern = '';
+  let command = '';
+  
+  // Parse args
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--run' || args[i] === '-r') {
+      command = args.slice(i + 1).join(' ');
+      break;
+    }
+    pattern += (pattern ? ' ' : '') + args[i];
+  }
+
+  // Validate pattern
+  const cron = parseWakeToCron(pattern);
+  if (!cron) {
+    console.log(`${c.red}Could not parse wake pattern:${c.reset} ${pattern}`);
+    console.log(`\n${c.dim}Examples:${c.reset}`);
+    console.log(`  mem wake "every 15m"`);
+    console.log(`  mem wake "every 2h"`);
+    console.log(`  mem wake "8am daily"`);
+    console.log(`  mem wake "monday 9am"`);
+    console.log(`  mem wake "*/30 * * * *"  ${c.dim}(raw cron)${c.reset}`);
+    return;
+  }
+
+  frontmatter.wake = pattern;
+  if (command) {
+    frontmatter.wake_command = command;
+  }
+
+  writeMemFile(memDir, 'state.md', serializeFrontmatter(frontmatter, body));
+  git(memDir, 'add', 'state.md');
+  git(memDir, 'commit', '-m', `wake: ${pattern}`);
+
+  console.log(`${c.green}✓${c.reset} Wake set: ${c.bold}${pattern}${c.reset}`);
+  console.log(`${c.dim}Cron: ${cron}${c.reset}`);
+  if (command) {
+    console.log(`${c.dim}Command: ${command}${c.reset}`);
+  }
+  console.log(`\n${c.dim}Export with: ${c.reset}mem cron export`);
+}
+
+// Export to cron format
+function cmdCronExport(memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const state = readMemFile(memDir, 'state.md') || '';
+  const { frontmatter } = parseFrontmatter(state);
+
+  if (!frontmatter.wake) {
+    console.log(`${c.yellow}No wake set.${c.reset} Use ${c.cyan}mem wake "pattern"${c.reset} first.`);
+    return;
+  }
+
+  const cron = parseWakeToCron(frontmatter.wake);
+  if (!cron) {
+    console.log(`${c.red}Could not parse wake pattern:${c.reset} ${frontmatter.wake}`);
+    return;
+  }
+
+  const command = frontmatter.wake_command || `cd ${memDir} && mem context`;
+  const entry = `${cron} ${command}`;
+
+  // Just output the cron line (can be piped/appended)
+  console.log(entry);
+}
+
 // ==================== MCP ====================
 
 function startMCPServer(args) {
@@ -1376,6 +1536,12 @@ ${c.bold}PRIMITIVES${c.reset}
   get <key>               Get a value
   append <list> <item>    Append to list
   log                     Raw git log
+
+${c.bold}WAKE${c.reset}
+  wake "<pattern>"        Set wake schedule (every 15m, 8am daily, etc.)
+  wake --run "<cmd>"      Set wake with custom command
+  wake clear              Clear wake schedule
+  cron export             Export wake as crontab entry
 
 ${c.bold}INTEGRATION${c.reset}
   skill                   View LLM skill
@@ -1515,6 +1681,18 @@ async function main() {
     // Skill
     case 'skill':
       handleSkillCommand(args);
+      break;
+    
+    // Wake
+    case 'wake':
+      cmdWake(cmdArgs, memDir);
+      break;
+    case 'cron':
+      if (cmdArgs[0] === 'export') {
+        cmdCronExport(memDir);
+      } else {
+        console.log(`${c.dim}Usage: mem cron export${c.reset}`);
+      }
       break;
     
     // MCP
