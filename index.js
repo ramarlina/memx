@@ -1646,8 +1646,13 @@ function cmdCronExport(memDir) {
     return;
   }
 
+  // Detect PATH from current environment for cron (which has minimal PATH)
+  const nodeBin = path.dirname(process.execPath);
+  const pathDirs = [nodeBin, '/usr/local/bin', '/usr/bin', '/bin'];
+  const pathPrefix = `PATH=${pathDirs.join(':')}`;
+
   const command = frontmatter.wake_command || `cd ${memDir} && mem context`;
-  const entry = `${cron} ${command}`;
+  const entry = `${cron} ${pathPrefix} && ${command}`;
 
   // Just output the cron line (can be piped/appended)
   console.log(entry);
