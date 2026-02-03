@@ -26,74 +26,86 @@ Use \`mem\` to maintain state, track progress, and accumulate learnings across s
 - **Git-backed**: All state is versioned and syncable
 - **Branches = Tasks**: Each task/goal is a separate branch
 - **Two scopes**: Task-local memory + global playbook
+- **Wake system**: Store schedule intent, export to cron
+
+## On Wake (Start of Session)
+
+\`\`\`bash
+mem context                 # Load full state: goal, progress, learnings
+\`\`\`
 
 ## Core Commands
 
 ### Lifecycle
 \`\`\`bash
 mem init <name> "<goal>"    # Start new task (creates branch)
-mem status                  # Current state summary
+mem status                  # Current state summary  
 mem done                    # Complete task, reflect, merge to main
+\`\`\`
+
+### Goal & Criteria
+\`\`\`bash
+mem goal [value]            # Get/set current goal
+mem criteria add "..."      # Add success criterion
+mem criteria <n>            # Mark criterion #n complete
+mem progress                # Show progress % against criteria
+mem constraint add "..."    # Add constraint/boundary
+mem constraints             # List constraints
 \`\`\`
 
 ### Progress
 \`\`\`bash
-mem goal [value]            # Get/set current goal
 mem next [step]             # Get/set next step
 mem checkpoint "<msg>"      # Save progress point
-mem stuck [reason]          # Mark/clear blocker
+mem stuck [reason|clear]    # Mark/clear blocker
 \`\`\`
 
 ### Learning
 \`\`\`bash
 mem learn "<insight>"       # Add task learning
-mem learn -g "<insight>"    # Add global learning
-mem playbook                # View global learnings
-mem promote <id>            # Promote local → global
+mem learn -g "<insight>"    # Add global learning  
+mem learnings               # List learnings with IDs
+mem playbook                # View global playbook
+mem promote <n>             # Promote learning #n to playbook
 \`\`\`
 
-### Query
-\`\`\`bash
-mem context                 # Full hydration (goal + state + learnings)
-mem history                 # Task progression
-mem query "<search>"        # Search all memory
-\`\`\`
-
-### Tasks
+### Tasks (Isolation)
 \`\`\`bash
 mem tasks                   # List all tasks (branches)
-mem switch <name>           # Switch to task
-mem archive <name>          # Archive completed task
+mem switch <name>           # Switch to different task
 \`\`\`
 
-### Sync
+### Wake & Sync
 \`\`\`bash
-mem sync                    # Push/pull current state
-\`\`\`
-
-## Primitives (low-level)
-
-\`\`\`bash
-mem set <key> <value>       # Set a value
-mem get <key>               # Get a value
-mem append <list> <item>    # Append to list
-mem log                     # Raw git log
+mem wake "every 15m"        # Set wake schedule
+mem wake "8am daily"        # Other patterns: monday 9am, */30 * * * *
+mem cron export             # Export as crontab entry
+mem sync                    # Push/pull with remote
 \`\`\`
 
 ## File Structure
 
 \`\`\`
 .mem/
-  goal.md           # Current task goal
-  state.md          # Progress, next steps, blockers
+  goal.md           # Objective + criteria + constraints
+  state.md          # Progress, next step, blockers, wake
   memory.md         # Task-specific learnings
-  playbook.md       # Global learnings (on all branches)
+  playbook.md       # Global learnings (shared)
 \`\`\`
+
+## Typical Session Loop
+
+1. \`mem context\` - Load state on wake
+2. \`mem next\` - See what to work on
+3. Do work
+4. \`mem checkpoint "..."\` - Save progress
+5. \`mem learn "..."\` - Capture insights
+6. \`mem next "..."\` - Set next step for future self
 
 ## When to use mem
 
 - Tracking long-running goals across sessions
-- Accumulating learnings that persist
+- Accumulating learnings that persist  
 - Coordinating between multiple agents
 - Maintaining continuity when context resets
 `;
