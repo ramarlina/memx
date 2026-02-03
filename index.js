@@ -155,17 +155,61 @@ function prompt(question) {
   });
 }
 
-// Find .mem directory (walk up from cwd)
+// Central mem location
+const CENTRAL_MEM = path.join(process.env.HOME || process.env.USERPROFILE, '.mem');
+const INDEX_FILE = path.join(CENTRAL_MEM, 'index.json');
+
+// Load/save index
+function loadIndex() {
+  try {
+    if (fs.existsSync(INDEX_FILE)) {
+      return JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+    }
+  } catch {}
+  return {};
+}
+
+function saveIndex(index) {
+  if (!fs.existsSync(CENTRAL_MEM)) {
+    fs.mkdirSync(CENTRAL_MEM, { recursive: true });
+  }
+  fs.writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
+}
+
+// Find .mem directory (check local first, then central with index)
 function findMemDir(startDir = process.cwd()) {
+  // First check local .mem (backwards compat)
   let dir = startDir;
   while (dir !== path.dirname(dir)) {
     const memDir = path.join(dir, '.mem');
     if (fs.existsSync(memDir) && fs.existsSync(path.join(memDir, '.git'))) {
-      return memDir;
+      return { memDir, isLocal: true, taskBranch: null };
     }
     dir = path.dirname(dir);
   }
+  
+  // Then check central ~/.mem with index
+  if (fs.existsSync(CENTRAL_MEM) && fs.existsSync(path.join(CENTRAL_MEM, '.git'))) {
+    const index = loadIndex();
+    const taskBranch = index[startDir];
+    if (taskBranch) {
+      return { memDir: CENTRAL_MEM, isLocal: false, taskBranch };
+    }
+    // Central exists but no mapping for this dir
+    return { memDir: CENTRAL_MEM, isLocal: false, taskBranch: null, unmapped: true };
+  }
+  
   return null;
+}
+
+// Get current task branch for central mem
+function ensureTaskBranch(memDir, taskBranch) {
+  if (!taskBranch) return;
+  
+  const currentBranch = git(memDir, 'rev-parse', '--abbrev-ref', 'HEAD');
+  if (currentBranch !== taskBranch) {
+    git(memDir, 'checkout', taskBranch);
+  }
 }
 
 // Run git command in .mem directory
@@ -234,16 +278,15 @@ function serializeFrontmatter(frontmatter, body) {
 
 // ==================== COMMANDS ====================
 
-// Interactive onboarding
+// Interactive onboarding (centralized by default)
 async function interactiveInit() {
   console.log(`\n${c.bold}${c.cyan}mem${c.reset} ${c.dim}— persistent memory for AI agents${c.reset}\n`);
-  console.log(`No ${c.cyan}.mem${c.reset} found. Let's set one up!\n`);
   
   // Get goal
   const goalText = await prompt(`${c.bold}What are you working on?${c.reset}\n> `);
   if (!goalText) {
     console.log(`${c.dim}Cancelled${c.reset}`);
-    return;
+    return null;
   }
   
   // Generate task name from goal
@@ -265,19 +308,24 @@ async function interactiveInit() {
     i++;
   }
   
-  // Create .mem directory
-  const targetDir = path.join(process.cwd(), '.mem');
-  fs.mkdirSync(targetDir, { recursive: true });
+  // Use central ~/.mem
+  const targetDir = CENTRAL_MEM;
+  const isNewRepo = !fs.existsSync(path.join(targetDir, '.git'));
+  
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
   
   try {
-    require('child_process').execSync('git init', { cwd: targetDir, stdio: 'ignore' });
-    
-    // Create playbook on main
-    writeMemFile(targetDir, 'playbook.md', `# Playbook\n\nGlobal learnings that transfer across tasks.\n`);
-    writeMemFile(targetDir, '.gitignore', '');
-    
-    git(targetDir, 'add', '-A');
-    git(targetDir, 'commit', '-m', 'init: memory repo');
+    if (isNewRepo) {
+      require('child_process').execSync('git init', { cwd: targetDir, stdio: 'ignore' });
+      writeMemFile(targetDir, 'playbook.md', `# Playbook\n\nGlobal learnings that transfer across tasks.\n`);
+      writeMemFile(targetDir, '.gitignore', '');
+      git(targetDir, 'add', '-A');
+      git(targetDir, 'commit', '-m', 'init: memory repo');
+    } else {
+      try { git(targetDir, 'checkout', 'main'); } catch {}
+    }
     
     // Create task branch
     const branch = `task/${name}`;
@@ -301,24 +349,25 @@ async function interactiveInit() {
     git(targetDir, 'add', '-A');
     git(targetDir, 'commit', '-m', `init: ${name}`);
     
-    console.log(`\n${c.green}✓${c.reset} Created ${c.cyan}.mem/${c.reset}`);
-    console.log(`${c.green}✓${c.reset} Task: ${c.bold}${name}${c.reset}`);
+    // Update index with cwd mapping
+    const index = loadIndex();
+    index[process.cwd()] = branch;
+    saveIndex(index);
+    
+    console.log(`\n${c.green}✓${c.reset} Created task: ${c.bold}${name}${c.reset}`);
+    console.log(`${c.green}✓${c.reset} Location: ${c.dim}~/.mem${c.reset}`);
+    console.log(`${c.green}✓${c.reset} Mapped: ${c.dim}${process.cwd()} → ${branch}${c.reset}`);
     if (criteria.length) {
       console.log(`${c.green}✓${c.reset} ${criteria.length} success criteria defined`);
     }
     
-    // Offer remote sync setup
-    const wantRemote = await prompt(`\n${c.bold}Sync to GitHub?${c.reset} ${c.dim}(keeps memory backed up + shareable)${c.reset} [y/N]: `);
-    
-    if (wantRemote.toLowerCase() === 'y' || wantRemote.toLowerCase() === 'yes') {
-      await setupRemote(targetDir, name);
-    }
-    
     console.log(`\n${c.dim}Run ${c.reset}mem status${c.dim} to see your progress${c.reset}\n`);
+    
+    return { memDir: targetDir, taskBranch: branch, name };
     
   } catch (err) {
     console.log(`${c.red}Error:${c.reset} ${err.message}`);
-    fs.rmSync(targetDir, { recursive: true, force: true });
+    return null;
   }
 }
 
@@ -1741,12 +1790,31 @@ async function main() {
   const cmd = args[0];
   const cmdArgs = args.slice(1);
   
-  // Find .mem repo
-  const memDir = findMemDir();
+  // Find .mem repo (returns object with memDir, taskBranch, etc.)
+  const memInfo = findMemDir();
+  let memDir = null;
+  
+  if (memInfo) {
+    memDir = memInfo.memDir;
+    // If central mem with task mapping, ensure we're on the right branch
+    if (!memInfo.isLocal && memInfo.taskBranch) {
+      ensureTaskBranch(memDir, memInfo.taskBranch);
+    }
+  }
   
   // No command and no .mem? Start interactive onboarding
   if (!cmd && !memDir) {
     await interactiveInit();
+    return;
+  }
+  
+  // No command but has central mem with no mapping for this dir?
+  if (!cmd && memInfo && memInfo.unmapped) {
+    console.log(`${c.dim}No task mapped for this directory.${c.reset}`);
+    const create = await prompt(`Create a new task? [Y/n]: `);
+    if (create.toLowerCase() !== 'n') {
+      await interactiveInit();
+    }
     return;
   }
   
