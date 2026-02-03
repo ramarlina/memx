@@ -1,0 +1,8 @@
+{
+  "name": "memx",
+  "description": "Persistent memory for AI agents - git-backed, branch-per-task state management",
+  "version": "0.3.1",
+  "author": "mndrk",
+  "repository": "https://github.com/ramarlina/memx",
+  "mcp": "./.mcp.json"
+}
