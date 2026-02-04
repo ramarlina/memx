@@ -14,10 +14,10 @@
     "testEnvironment": "node",
     "coverageThreshold": {
       "global": {
-        "branches": 70,
-        "functions": 80,
-        "lines": 79,
-        "statements": 79
+        "branches": 78,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
       }
     },
     "testPathIgnorePatterns": ["/node_modules/"],

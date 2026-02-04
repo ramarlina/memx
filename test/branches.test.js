@@ -31,8 +31,6 @@ const {
   cmdCommit,
   cmdSwitch,
   cmdSync,
-  cmdWake,
-  cmdCronExport,
   writeMemFile,
   readMemFile,
   CENTRAL_MEM,
@@ -245,47 +243,5 @@ describe('cmdSync edge cases', () => {
     cmdSync(memDir);
 
     expect(consoleSpy.mock.calls[0][0]).toContain('No remote');
-  });
-});
-
-describe('cmdWake edge cases', () => {
-  test('clears wake schedule', () => {
-    spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-    writeMemFile(memDir, 'state.md', '---\nstatus: active\nwake: every 15m\n---\n\n');
-
-    cmdWake(['clear'], memDir);
-
-    const content = readMemFile(memDir, 'state.md');
-    expect(content).not.toContain('wake:');
-  });
-
-  test('sets wake schedule without --run', () => {
-    spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-    writeMemFile(memDir, 'state.md', '---\nstatus: active\n---\n\n');
-
-    cmdWake(['every', '30m'], memDir);
-
-    const content = readMemFile(memDir, 'state.md');
-    expect(content).toContain('wake: every 30m');
-  });
-});
-
-describe('cmdCronExport edge cases', () => {
-  test('shows no wake when state.md missing', () => {
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdCronExport(memDir);
-
-    expect(consoleSpy.mock.calls[0][0]).toContain('No wake');
-  });
-
-  test('exports with default wake command', () => {
-    writeMemFile(memDir, 'state.md', '---\nwake: every 1h\n---\n\n');
-
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdCronExport(memDir);
-
-    const output = consoleSpy.mock.calls[0][0];
-    // Should contain cron expression and mem context command
-    expect(output).toContain('mem context');
   });
 });

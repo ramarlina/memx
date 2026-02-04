@@ -33,7 +33,6 @@ const {
   cmdCriteria,
   cmdBranch,
   cmdCommit,
-  cmdWake,
   writeMemFile,
   readMemFile,
   parseFrontmatter,
@@ -349,33 +348,6 @@ describe('cmdCommit additional tests', () => {
     cmdCommit(['test'], memDir);
 
     expect(consoleSpy).toHaveBeenCalled();
-  });
-});
-
-describe('cmdWake additional tests', () => {
-  test('shows wake with command', () => {
-    writeMemFile(memDir, 'state.md', '---\nwake: every 15m\nwake_command: custom command\n---\n\n');
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdWake([], memDir);
-    const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
-    expect(output).toContain('custom command');
-  });
-
-  test('sets wake with --run flag', () => {
-    spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-    writeMemFile(memDir, 'state.md', '---\nstatus: active\n---\n\n');
-
-    cmdWake(['every', '15m', '--run', 'echo', 'hello'], memDir);
-
-    const content = readMemFile(memDir, 'state.md');
-    expect(content).toContain('wake_command: echo hello');
-  });
-
-  test('shows no wake message', () => {
-    writeMemFile(memDir, 'state.md', '---\nstatus: active\n---\n\n');
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdWake([], memDir);
-    expect(consoleSpy.mock.calls[0][0]).toContain('No wake set');
   });
 });
 

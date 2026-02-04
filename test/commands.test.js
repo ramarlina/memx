@@ -45,8 +45,6 @@ const {
   cmdGet,
   cmdAppend,
   cmdLog,
-  cmdWake,
-  cmdCronExport,
   readMemFile,
   writeMemFile,
   parseFrontmatter,
@@ -663,67 +661,3 @@ describe('Primitive commands', () => {
   });
 });
 
-describe('Wake commands', () => {
-  describe('cmdWake', () => {
-    test('prints warning when no memDir', () => {
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdWake([], null);
-      expect(consoleSpy.mock.calls[0][0]).toContain('No .mem repo found');
-    });
-
-    test('shows current wake when no args', () => {
-      writeMemFile(memDir, 'state.md', '---\nwake: every 15m\n---\n\n');
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdWake([], memDir);
-      expect(consoleSpy.mock.calls[0][0]).toContain('every 15m');
-    });
-
-    test('sets wake pattern', () => {
-      spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-      writeMemFile(memDir, 'state.md', '---\nstatus: active\n---\n\n');
-
-      cmdWake(['every', '30m'], memDir);
-
-      const content = readMemFile(memDir, 'state.md');
-      expect(content).toContain('wake: every 30m');
-    });
-
-    test('clears wake with "clear" argument', () => {
-      spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-      writeMemFile(memDir, 'state.md', '---\nwake: every 15m\n---\n\n');
-
-      cmdWake(['clear'], memDir);
-
-      const content = readMemFile(memDir, 'state.md');
-      expect(content).not.toContain('wake:');
-    });
-
-    test('rejects invalid pattern', () => {
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdWake(['invalid', 'pattern'], memDir);
-      expect(consoleSpy.mock.calls[0][0]).toContain('Could not parse');
-    });
-  });
-
-  describe('cmdCronExport', () => {
-    test('prints warning when no memDir', () => {
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdCronExport(null);
-      expect(consoleSpy.mock.calls[0][0]).toContain('No .mem repo found');
-    });
-
-    test('exports cron entry', () => {
-      writeMemFile(memDir, 'state.md', '---\nwake: every 15m\n---\n\n');
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdCronExport(memDir);
-      expect(consoleSpy.mock.calls[0][0]).toContain('*/15 * * * *');
-    });
-
-    test('warns when no wake set', () => {
-      writeMemFile(memDir, 'state.md', '---\nstatus: active\n---\n\n');
-      const consoleSpy = jest.spyOn(console, 'log');
-      cmdCronExport(memDir);
-      expect(consoleSpy.mock.calls[0][0]).toContain('No wake set');
-    });
-  });
-});

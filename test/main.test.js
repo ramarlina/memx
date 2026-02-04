@@ -100,14 +100,6 @@ describe('showHelp', () => {
     expect(output).toContain('sync');
   });
 
-  test('shows WAKE section', () => {
-    showHelp();
-    const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
-    expect(output).toContain('WAKE');
-    expect(output).toContain('wake');
-    expect(output).toContain('cron');
-  });
-
   test('shows INTEGRATION section', () => {
     showHelp();
     const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');

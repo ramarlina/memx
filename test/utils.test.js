@@ -25,7 +25,6 @@ jest.mock('readline', () => ({
 const {
   parseFrontmatter,
   serializeFrontmatter,
-  parseWakeToCron,
   loadConfig,
   saveConfig,
   loadIndex,
@@ -125,134 +124,12 @@ describe('serializeFrontmatter', () => {
   });
 
   test('roundtrip with parseFrontmatter', () => {
-    const original = { status: 'active', wake: 'every 15m' };
+    const original = { status: 'active', task: 'test-task' };
     const body = '# Test\n\nSome content';
     const serialized = serializeFrontmatter(original, body);
     const parsed = parseFrontmatter(serialized);
     expect(parsed.frontmatter).toEqual(original);
     expect(parsed.body).toBe(body);
-  });
-});
-
-describe('parseWakeToCron', () => {
-  describe('interval patterns', () => {
-    test('parses "every 15m"', () => {
-      expect(parseWakeToCron('every 15m')).toBe('*/15 * * * *');
-    });
-
-    test('parses "every 30min"', () => {
-      expect(parseWakeToCron('every 30min')).toBe('*/30 * * * *');
-    });
-
-    test('parses "every 5 minutes"', () => {
-      expect(parseWakeToCron('every 5 minutes')).toBe('*/5 * * * *');
-    });
-
-    test('parses "every 2h"', () => {
-      expect(parseWakeToCron('every 2h')).toBe('0 */2 * * *');
-    });
-
-    test('parses "every 4hr"', () => {
-      expect(parseWakeToCron('every 4hr')).toBe('0 */4 * * *');
-    });
-
-    test('parses "every 1 hour"', () => {
-      expect(parseWakeToCron('every 1 hour')).toBe('0 */1 * * *');
-    });
-  });
-
-  describe('daily patterns', () => {
-    test('parses "8am"', () => {
-      expect(parseWakeToCron('8am')).toBe('0 8 * * *');
-    });
-
-    test('parses "8am daily"', () => {
-      expect(parseWakeToCron('8am daily')).toBe('0 8 * * *');
-    });
-
-    test('parses "9:30am"', () => {
-      expect(parseWakeToCron('9:30am')).toBe('30 9 * * *');
-    });
-
-    test('parses "5pm"', () => {
-      expect(parseWakeToCron('5pm')).toBe('0 17 * * *');
-    });
-
-    test('parses "9:30pm daily"', () => {
-      expect(parseWakeToCron('9:30pm daily')).toBe('30 21 * * *');
-    });
-
-    test('parses "12am" (midnight)', () => {
-      expect(parseWakeToCron('12am')).toBe('0 0 * * *');
-    });
-
-    test('parses "12pm" (noon)', () => {
-      expect(parseWakeToCron('12pm')).toBe('0 12 * * *');
-    });
-  });
-
-  describe('weekly patterns', () => {
-    test('parses "monday 9am"', () => {
-      expect(parseWakeToCron('monday 9am')).toBe('0 9 * * 1');
-    });
-
-    test('parses "friday 5pm"', () => {
-      expect(parseWakeToCron('friday 5pm')).toBe('0 17 * * 5');
-    });
-
-    test('parses "every tuesday at 3pm"', () => {
-      expect(parseWakeToCron('every tuesday at 3pm')).toBe('0 15 * * 2');
-    });
-
-    test('parses "wednesday 10:30am"', () => {
-      expect(parseWakeToCron('wednesday 10:30am')).toBe('30 10 * * 3');
-    });
-
-    test('parses "sun 8am"', () => {
-      expect(parseWakeToCron('sun 8am')).toBe('0 8 * * 0');
-    });
-
-    test('parses "saturday 2pm"', () => {
-      expect(parseWakeToCron('saturday 2pm')).toBe('0 14 * * 6');
-    });
-
-    test('parses "thu 12pm"', () => {
-      expect(parseWakeToCron('thu 12pm')).toBe('0 12 * * 4');
-    });
-  });
-
-  describe('raw cron patterns', () => {
-    test('passes through valid cron expression', () => {
-      expect(parseWakeToCron('0 * * * *')).toBe('0 * * * *');
-    });
-
-    test('passes through complex cron expression', () => {
-      expect(parseWakeToCron('*/5 9-17 * * 1-5')).toBe('*/5 9-17 * * 1-5');
-    });
-  });
-
-  describe('invalid patterns', () => {
-    test('returns null for invalid pattern', () => {
-      expect(parseWakeToCron('invalid')).toBeNull();
-    });
-
-    test('returns null for partial pattern', () => {
-      expect(parseWakeToCron('every')).toBeNull();
-    });
-
-    test('returns null for unsupported format', () => {
-      expect(parseWakeToCron('at noon')).toBeNull();
-    });
-  });
-
-  describe('case insensitivity', () => {
-    test('handles uppercase', () => {
-      expect(parseWakeToCron('EVERY 15M')).toBe('*/15 * * * *');
-    });
-
-    test('handles mixed case', () => {
-      expect(parseWakeToCron('Monday 9AM')).toBe('0 9 * * 1');
-    });
   });
 });
 

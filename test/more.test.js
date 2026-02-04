@@ -31,7 +31,6 @@ const {
   ensureTaskBranch,
   parseFrontmatter,
   serializeFrontmatter,
-  parseWakeToCron,
   cmdStatus,
   cmdGoal,
   cmdNext,
@@ -42,7 +41,6 @@ const {
   cmdAppend,
   cmdLog,
   cmdHistory,
-  cmdCronExport,
   writeMemFile,
   readMemFile,
   CENTRAL_MEM,
@@ -140,20 +138,6 @@ describe('parseFrontmatter edge cases', () => {
     const result = parseFrontmatter('---\n\n---\n\nBody');
     expect(result.frontmatter).toEqual({});
     expect(result.body).toBe('Body');
-  });
-});
-
-describe('parseWakeToCron edge cases', () => {
-  test('handles "every" without units', () => {
-    expect(parseWakeToCron('every')).toBeNull();
-  });
-
-  test('handles mixed spacing', () => {
-    expect(parseWakeToCron('  every  15m  ')).toBe('*/15 * * * *');
-  });
-
-  test('handles "at" keyword in weekly pattern', () => {
-    expect(parseWakeToCron('every monday at 9am')).toBe('0 9 * * 1');
   });
 });
 
@@ -310,22 +294,6 @@ describe('cmdHistory additional tests', () => {
     cmdHistory(memDir);
     const output = consoleSpy.mock.calls.map(c => c[0]).join('\n');
     expect(output).toContain('History');
-  });
-});
-
-describe('cmdCronExport additional tests', () => {
-  test('exports with custom wake_command', () => {
-    writeMemFile(memDir, 'state.md', '---\nwake: every 15m\nwake_command: custom cmd\n---\n\n');
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdCronExport(memDir);
-    expect(consoleSpy.mock.calls[0][0]).toContain('custom cmd');
-  });
-
-  test('handles unparseable wake pattern', () => {
-    writeMemFile(memDir, 'state.md', '---\nwake: invalid pattern\n---\n\n');
-    const consoleSpy = jest.spyOn(console, 'log');
-    cmdCronExport(memDir);
-    expect(consoleSpy.mock.calls[0][0]).toContain('Could not parse');
   });
 });
 
