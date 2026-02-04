@@ -87,7 +87,7 @@ describe('cmdInit', () => {
 describe('cmdTasks', () => {
   test('prints warning when no memDir', () => {
     const consoleSpy = jest.spyOn(console, 'log');
-    cmdTasks(null);
+    cmdTasks([], null);
     expect(consoleSpy.mock.calls[0][0]).toContain('No .mem repo found');
   });
 
@@ -97,7 +97,7 @@ describe('cmdTasks', () => {
       .mockReturnValueOnce({ status: 0, stdout: '* main', stderr: '' }); // branch list
 
     const consoleSpy = jest.spyOn(console, 'log');
-    cmdTasks(memDir);
+    cmdTasks([], memDir);
     expect(consoleSpy.mock.calls[0][0]).toContain('No tasks');
   });
 
@@ -115,7 +115,7 @@ describe('cmdTasks', () => {
     writeMemFile(memDir, 'goal.md', '# Goal\n\nTest\n\n## Progress: 50%');
 
     const consoleSpy = jest.spyOn(console, 'log');
-    cmdTasks(memDir);
+    cmdTasks([], memDir);
 
     expect(consoleSpy).toHaveBeenCalled();
   });

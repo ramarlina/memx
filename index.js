@@ -258,6 +258,23 @@ function git(memDir, ...args) {
   }
 }
 
+// Parallel-safe: read file from branch without checkout
+function gitShow(memDir, branch, filename) {
+  try {
+    const result = require('child_process').spawnSync('git', ['show', `${branch}:${filename}`], {
+      cwd: memDir,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    if (result.status !== 0) {
+      return null;
+    }
+    return result.stdout || '';
+  } catch {
+    return null;
+  }
+}
+
 // Get current branch
 function getCurrentBranch(memDir) {
   return git(memDir, 'rev-parse', '--abbrev-ref', 'HEAD');
@@ -779,9 +796,16 @@ function cmdContext(memDir) {
 }
 
 // List tasks
-function cmdTasks(memDir) {
+// Uses git show for parallel-safe reading (no checkout required)
+function cmdTasks(args, memDir) {
+  const jsonMode = args.includes('--json');
+
   if (!memDir) {
-    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    if (jsonMode) {
+      console.log(JSON.stringify({ tasks: [], error: 'no_repo' }));
+    } else {
+      console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    }
     return;
   }
 
@@ -791,30 +815,42 @@ function cmdTasks(memDir) {
     .filter(b => b && b !== 'main' && b !== 'master');
 
   if (branches.length === 0) {
-    console.log(`${c.yellow}No tasks found${c.reset}`);
+    if (jsonMode) {
+      console.log(JSON.stringify({ tasks: [] }));
+    } else {
+      console.log(`${c.yellow}No tasks found${c.reset}`);
+    }
     return;
   }
 
-  // Load task info
+  // Build reverse index: branch -> projectDir
+  const index = loadIndex();
+  const branchToDir = {};
+  for (const [dir, branch] of Object.entries(index)) {
+    branchToDir[branch] = dir;
+  }
+
+  // Load task info using git show (parallel-safe, no checkout)
   const tasks = branches.map(branch => {
     const taskName = branch.replace('task/', '');
     let status = 'active';
     let progress = '—';
     let goal = '';
+    let provider = 'claude';
 
     try {
-      git(memDir, 'checkout', branch);
-      const stateFile = path.join(memDir, 'state.md');
-      const goalFile = path.join(memDir, 'goal.md');
-
-      if (fs.existsSync(stateFile)) {
-        const state = fs.readFileSync(stateFile, 'utf8');
-        if (state.includes('status: done')) status = 'done';
-        else if (state.includes('status: blocked')) status = 'blocked';
+      // Use git show to read files without checkout (parallel-safe)
+      const stateContent = gitShow(memDir, branch, 'state.md');
+      if (stateContent) {
+        const { frontmatter } = parseFrontmatter(stateContent);
+        status = frontmatter.status || 'active';
+        provider = frontmatter.provider || 'claude';
       }
+    } catch {}
 
-      if (fs.existsSync(goalFile)) {
-        const goalContent = fs.readFileSync(goalFile, 'utf8');
+    try {
+      const goalContent = gitShow(memDir, branch, 'goal.md');
+      if (goalContent) {
         const progressMatch = goalContent.match(/Progress:\s*(\d+)%/i);
         if (progressMatch) progress = `${progressMatch[1]}%`;
 
@@ -823,11 +859,23 @@ function cmdTasks(memDir) {
       }
     } catch {}
 
-    return { branch, taskName, status, progress, goal, isCurrent: branch === currentBranch };
+    return {
+      branch,
+      taskName,
+      status,
+      progress,
+      goal,
+      provider,
+      projectDir: branchToDir[branch] || null,
+      isCurrent: branch === currentBranch
+    };
   });
 
-  // Restore original branch
-  try { git(memDir, 'checkout', currentBranch); } catch {}
+  // JSON mode - output structured data for agx
+  if (jsonMode) {
+    console.log(JSON.stringify({ tasks }));
+    return;
+  }
 
   // Non-interactive if not TTY
   if (!process.stdin.isTTY) {
@@ -1782,6 +1830,73 @@ function cmdLog(memDir) {
   console.log(log);
 }
 
+// Live watch memory activity
+function cmdWatch(memDir) {
+  if (!memDir) {
+    console.log(`${c.yellow}No .mem repo found.${c.reset}`);
+    return;
+  }
+
+  const clearScreen = () => process.stdout.write('\x1b[2J\x1b[H');
+
+  const render = () => {
+    clearScreen();
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('                    📝 Memory Activity');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('');
+
+    // Show main branch
+    console.log(`  ${c.yellow}📌 main${c.reset}`);
+    try {
+      const mainLog = git(memDir, 'log', 'main', '--format=%C(dim)%ar%C(reset)  %C(cyan)%s%C(reset)', '-6');
+      mainLog.split('\n').filter(l => l).forEach(line => console.log(`     ${line}`));
+    } catch (e) {
+      console.log(`     ${c.dim}(no commits)${c.reset}`);
+    }
+
+    // Show task branches
+    try {
+      const branches = git(memDir, 'branch', '--format=%(refname:short)')
+        .split('\n')
+        .filter(b => b.startsWith('task/'))
+        .slice(0, 3);
+
+      for (const branch of branches) {
+        const taskName = branch.replace('task/', '');
+        console.log('');
+        console.log(`  ${c.yellow}📌 ${taskName}${c.reset}`);
+        try {
+          const branchLog = git(memDir, 'log', branch, '--format=%C(dim)%ar%C(reset)  %C(cyan)%s%C(reset)', '-3');
+          branchLog.split('\n').filter(l => l).forEach(line => console.log(`     ${line}`));
+        } catch (e) {
+          console.log(`     ${c.dim}(no commits)${c.reset}`);
+        }
+      }
+    } catch (e) {
+      // No task branches
+    }
+
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════');
+    const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+    console.log(`               ${c.dim}${now} • ctrl+c to exit${c.reset}`);
+  };
+
+  // Initial render
+  render();
+
+  // Update every 2 seconds
+  const interval = setInterval(render, 2000);
+
+  // Handle exit
+  process.on('SIGINT', () => {
+    clearInterval(interval);
+    clearScreen();
+    process.exit(0);
+  });
+}
+
 // ==================== SKILL ====================
 
 function isSkillInstalled(provider) {
@@ -1987,6 +2102,7 @@ ${c.bold}PRIMITIVES${c.reset}
   get <key>               Get a value
   append <list> <item>    Append to list
   log                     Raw git log
+  watch                   Live tail of memory activity
 
 
 ${c.bold}INTEGRATION${c.reset}
@@ -2136,7 +2252,7 @@ async function main() {
     // Tasks
     case 'tasks':
     case 'ls':
-      cmdTasks(memDir);
+      cmdTasks(cmdArgs, memDir);
       break;
     case 'switch':
     case 'sw':
@@ -2169,7 +2285,11 @@ async function main() {
     case 'log':
       cmdLog(memDir);
       break;
-      
+    case 'watch':
+    case 'tail':
+      cmdWatch(memDir);
+      break;
+
     // Skill
     case 'skill':
       handleSkillCommand(args);
@@ -2252,6 +2372,7 @@ module.exports = {
   cmdGet,
   cmdAppend,
   cmdLog,
+  cmdWatch,
   cmdNew,
 
   // Skill functions

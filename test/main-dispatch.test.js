@@ -91,7 +91,7 @@ describe('cmdTasks edge cases', () => {
       .mockReturnValueOnce({ status: 0, stdout: '* main', stderr: '' });
 
     const consoleSpy = jest.spyOn(console, 'log');
-    cmdTasks(memDir);
+    cmdTasks([], memDir);
 
     expect(consoleSpy.mock.calls[0][0]).toContain('No tasks');
   });
@@ -109,7 +109,7 @@ describe('cmdTasks edge cases', () => {
     writeMemFile(memDir, 'goal.md', '---\ntask: first\n---\n\n# Goal\n\nTest goal\n\n## Progress: 50%');
 
     const consoleSpy = jest.spyOn(console, 'log');
-    cmdTasks(memDir);
+    cmdTasks([], memDir);
 
     expect(consoleSpy).toHaveBeenCalled();
   });

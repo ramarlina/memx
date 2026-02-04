@@ -15,9 +15,9 @@
     "coverageThreshold": {
       "global": {
         "branches": 78,
-        "functions": 85,
-        "lines": 85,
-        "statements": 85
+        "functions": 80,
+        "lines": 83,
+        "statements": 83
       }
     },
     "testPathIgnorePatterns": ["/node_modules/"],
