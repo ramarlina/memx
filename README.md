@@ -12,52 +12,57 @@ npm install -g @mndrk/memx
 # Run mem in any directory - interactive setup
 mem
 
-# Or explicit init
-mem init landing "Build landing page for my project"
+# Or create a task
+mem new landing "Build landing page for my project"
 
 # Track progress
 mem checkpoint "Hero section complete"
 mem next "Add testimonials"
-mem stuck "Waiting on copy from client"
 
 # Record learnings
 mem learn "Tailwind is faster than custom CSS"
 
-# Get full context (on wake)
+# Get full context
 mem context
-
-# See progress against success criteria
-mem progress
 ```
 
 ## Architecture
 
-```
-WAKE → LOAD STATE → THINK → ACT → SAVE STATE → SLEEP
-```
-
 - **Git-backed**: All state versioned and syncable
+- **Central repo**: `~/.mem` with index mapping projects to tasks
 - **Branches = Tasks**: Each goal is a separate branch
 - **Two scopes**: Task-local memory + global playbook
-- **Adapters**: Export wake schedule to cron, pm2, etc.
+- **KV primitives**: Generic set/get/pop for app-specific data
 
 ## File Structure
 
 ```
-.mem/
-  goal.md           # Objective + success criteria + constraints
-  state.md          # Progress, next step, blockers, wake schedule
-  memory.md         # Task-specific learnings
-  playbook.md       # Global learnings (shared across tasks)
+~/.mem/                     # Central memory repo
+  index.json                # Maps project dirs to task branches
+  playbook.md               # Global learnings (shared)
+
+  # Per-task (on task branch):
+  goal.md                   # Objective + criteria
+  state.md                  # Status, next step, wake, KV data
+  memory.md                 # Task-specific learnings
 ```
 
 ## Commands
 
 ### Lifecycle
 ```bash
-mem init <name> "<goal>"    # Start new task (interactive if no args)
+mem new <name> "<goal>"     # Create task in central ~/.mem with index
+mem init <name> "<goal>"    # Start new task (creates branch)
 mem status                  # Current state summary
-mem done                    # Complete task, reflect, merge learnings
+mem done                    # Complete task, merge learnings
+mem delete <name>           # Delete task and remove from index
+```
+
+### Context
+```bash
+mem context                 # Full state: goal, progress, criteria, learnings
+mem context --json          # JSON output for programmatic use
+mem context <task>          # View specific task without switching
 ```
 
 ### Goal & Criteria
@@ -66,8 +71,6 @@ mem goal [value]            # Get/set goal
 mem criteria add "..."      # Add success criterion
 mem criteria <n>            # Mark criterion #n complete
 mem progress                # Show progress % with visual bar
-mem constraint add "..."    # Add constraint/boundary
-mem constraints             # List constraints
 ```
 
 ### Progress
@@ -86,35 +89,28 @@ mem playbook                # View global playbook
 mem promote <n>             # Promote learning #n to playbook
 ```
 
-### Query
+### Tasks
 ```bash
-mem context                 # Full hydration for agent wake
-mem history                 # Task progression (git log)
-mem query "<search>"        # Search all memory
+mem tasks                   # Interactive task browser (TUI)
+mem tasks --json            # JSON: all tasks with status, progress, criteria
+mem switch <name>           # Switch to different task
+mem delete <name>           # Delete task
 ```
 
-### Tasks (Isolation)
+### KV Primitives
 ```bash
-mem tasks                   # List all tasks (branches)
-mem switch <name>           # Switch to different task
+mem set <key> <value>       # Store value in state.md frontmatter
+mem get <key>               # Retrieve value
+mem pop <key>               # Get value and delete (for queues)
+mem pop <key> --json        # JSON output: { "value": "..." }
 ```
 
 ### Wake & Sync
 ```bash
-mem wake "<pattern>"        # Set wake schedule
-mem wake "every 15m"        # Examples: every 15m, 8am daily, monday 9am
-mem wake --run "<cmd>"      # Custom wake command
+mem wake "<pattern>"        # Set wake schedule (every 15m, 8am daily)
 mem wake clear              # Clear wake schedule
 mem cron export             # Export as crontab entry
 mem sync                    # Push/pull with remote
-```
-
-### Integration
-```bash
-mem skill                   # View LLM skill
-mem skill install           # Install skill to Claude/Gemini
-mem mcp                     # Start MCP server (stdio)
-mem mcp config              # Show config for Claude Desktop
 ```
 
 ## Task Isolation
@@ -122,8 +118,8 @@ mem mcp config              # Show config for Claude Desktop
 Each task is a git branch. Switch instantly between contexts:
 
 ```bash
-mem init landing "Build landing page"   # → task/landing branch
-mem init auth "Fix auth bug"            # → task/auth branch
+mem new landing "Build landing page"   # → task/landing branch
+mem new auth "Fix auth bug"            # → task/auth branch
 
 mem switch landing   # Work on landing
 mem switch auth      # Context switch to auth
@@ -131,67 +127,92 @@ mem switch auth      # Context switch to auth
 mem done             # Complete, merge learnings to main
 ```
 
-Learnings stay isolated until promoted to the global playbook.
+## JSON Output
 
-## Wake System
-
-Store wake intent in memory, export to any scheduler:
+For programmatic use by agents/tools:
 
 ```bash
-# Set wake schedule
-mem wake "every 15m"
-mem wake "8am daily" --run "mem context | claude -p 'continue'"
+mem context --json
+```
 
-# Export to cron
-mem cron export >> /etc/crontab
+Returns:
+```json
+{
+  "task": "my-task",
+  "branch": "task/my-task",
+  "status": "active",
+  "goal": "Build feature X",
+  "progress": 60,
+  "criteria": [
+    { "index": 1, "done": true, "text": "Design API" },
+    { "index": 2, "done": false, "text": "Implement endpoints" }
+  ],
+  "nextStep": "Add authentication",
+  "checkpoints": ["Completed schema design"],
+  "learnings": ["Use JWT for auth"],
+  "playbook": ["Always define done first"]
+}
+```
 
-# Or view for manual setup
-mem cron export
-# → */15 * * * * cd /path && mem context
+```bash
+mem tasks --json
+```
+
+Returns all tasks with their full state.
+
+## KV Primitives
+
+Generic key-value storage for app-specific data:
+
+```bash
+# Store data
+mem set mykey "some value"
+
+# Retrieve
+mem get mykey
+# → some value
+
+# Get and delete (useful for queues)
+mem pop mykey
+# → some value (now deleted)
+
+# JSON output for programmatic use
+mem pop mykey --json
+# → {"value": "some value"}
+```
+
+Used by `agx` for nudges:
+```bash
+# agx stores nudges as JSON array
+mem set nudges '["msg1", "msg2"]'
+mem pop nudges --json  # Read and clear
 ```
 
 ## For AI Agents
 
-### Claude Code Plugin
+### With agx
 
-Install as a Claude Code plugin for automatic skill loading and slash commands:
+`agx` uses mem for all state management:
 
 ```bash
-claude plugin install github:ramarlina/memx
+agx -a -p "Build todo app"   # Creates task via mem new
+agx tasks                    # Lists via mem tasks --json
+agx nudge task "hint"        # Stores via mem set/get/pop
 ```
 
-This adds:
-- **Skill**: Claude learns how to use mem automatically
-- **MCP Server**: Direct tool access
-- **Commands**: `/mem:status`, `/mem:checkpoint`, `/mem:context`
+### Direct Integration
 
-### Manual Setup
-
-Install the skill so LLMs know how to use mem:
+Install skill for Claude/Gemini:
 
 ```bash
 mem skill install
 ```
 
-Or use MCP for direct integration:
+Or use MCP server:
 
 ```bash
 mem mcp config   # Get config for Claude Desktop
 ```
-
-## How It Works
-
-1. **Init**: Create `.mem/` with goal + criteria
-2. **Wake**: Agent runs `mem context` to hydrate
-3. **Work**: Execute, checkpoint, learn
-4. **Sleep**: State persisted in git
-5. **Repeat**: Next session picks up where left off
-
-The framework enforces:
-- Define done before starting (criteria in goal.md)
-- Track progress explicitly (checkpoints)
-- Capture learnings (memory.md)
-- Curate transferable knowledge (promote to playbook)
 
 ## License
 
