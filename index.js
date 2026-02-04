@@ -1,5 +1,29 @@
 #!/usr/bin/env node
 
+// ============================================================
+// mem - Git-backed Key-Value Store for AI Agents
+//
+// Architecture:
+// - All data stored in central ~/.mem git repository
+// - Each task is a git branch (task/<name>)
+// - index.json maps project directories → task branches
+// - agx orchestrator calls mem commands, never accesses ~/.mem directly
+//
+// Storage structure (per task branch):
+//   goal.md     - task goal, criteria, progress %
+//   state.md    - status, provider, next step, checkpoints
+//   memory.md   - learnings and insights
+//   playbook.md - global learnings (on main branch)
+//
+// Primitives:
+//   mem new "goal" --provider c    Create task (branch + files + commit)
+//   mem branch <name>              Create/switch branch
+//   mem commit "msg"               Commit changes
+//   mem set <key> <value>          Set frontmatter value
+//   mem get <key>                  Get frontmatter value
+//   mem context --json             Get full task context
+// ============================================================
+
 const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -1463,6 +1487,202 @@ function cmdCriteria(args, memDir) {
 
 // ==================== PRIMITIVES ====================
 
+function cmdBranch(args, memDir) {
+  const name = args[0];
+
+  // Initialize central mem if needed
+  if (!fs.existsSync(CENTRAL_MEM)) {
+    fs.mkdirSync(CENTRAL_MEM, { recursive: true });
+    execSync('git init', { cwd: CENTRAL_MEM, stdio: 'ignore' });
+    writeMemFile(CENTRAL_MEM, 'playbook.md', '# Playbook\n\n');
+    git(CENTRAL_MEM, 'add', '-A');
+    git(CENTRAL_MEM, 'commit', '-m', 'init: central memory');
+    console.log(`${c.green}✓${c.reset} Initialized central memory: ${c.dim}${CENTRAL_MEM}${c.reset}`);
+  }
+
+  const targetDir = memDir || CENTRAL_MEM;
+
+  // No args: list branches
+  if (!name) {
+    const branches = git(targetDir, 'branch', '--list');
+    console.log(branches || `${c.dim}No branches${c.reset}`);
+    return;
+  }
+
+  // Check if branch exists
+  const branches = git(targetDir, 'branch', '--list').split('\n').map(b => b.replace('*', '').trim());
+  const branchExists = branches.includes(name) || branches.includes(`task/${name}`);
+
+  try {
+    if (branchExists) {
+      // Switch to existing branch
+      const branchName = branches.includes(name) ? name : `task/${name}`;
+      git(targetDir, 'checkout', branchName);
+      console.log(`${c.green}✓${c.reset} Switched to: ${c.cyan}${branchName}${c.reset}`);
+    } else {
+      // Create new branch
+      const branchName = name.startsWith('task/') ? name : `task/${name}`;
+      git(targetDir, 'checkout', '-b', branchName);
+      console.log(`${c.green}✓${c.reset} Created branch: ${c.cyan}${branchName}${c.reset}`);
+    }
+  } catch (err) {
+    console.log(`${c.red}Error:${c.reset} ${err.message}`);
+  }
+}
+
+function cmdCommit(args, memDir) {
+  if (!memDir) {
+    // Use central mem
+    memDir = CENTRAL_MEM;
+    if (!fs.existsSync(memDir)) {
+      console.log(`${c.yellow}No .mem repo found.${c.reset} Run ${c.cyan}mem branch <name>${c.reset} first.`);
+      return;
+    }
+  }
+
+  const msg = args.join(' ') || 'checkpoint';
+
+  try {
+    // Check for changes
+    const status = git(memDir, 'status', '--porcelain');
+    if (!status.trim()) {
+      console.log(`${c.dim}No changes to commit${c.reset}`);
+      return;
+    }
+
+    // Add and commit
+    git(memDir, 'add', '-A');
+    git(memDir, 'commit', '-m', msg);
+    console.log(`${c.green}✓${c.reset} Committed: ${c.dim}${msg}${c.reset}`);
+  } catch (err) {
+    console.log(`${c.red}Error:${c.reset} ${err.message}`);
+  }
+}
+
+// ============================================================
+// cmdNew: Create a new task with all necessary files
+// This is the ONLY way to create tasks - agx calls this
+// ============================================================
+function cmdNew(args, memDir) {
+  // Parse flags
+  const jsonMode = args.includes('--json');
+
+  // Parse --provider / -P flag
+  let provider = 'claude';
+  const providerIdx = args.findIndex(a => a === '--provider' || a === '-P');
+  if (providerIdx !== -1 && args[providerIdx + 1]) {
+    provider = args[providerIdx + 1].toLowerCase();
+  }
+
+  // Parse --dir flag for project directory mapping
+  let projectDir = process.cwd();
+  const dirIdx = args.findIndex(a => a === '--dir');
+  if (dirIdx !== -1 && args[dirIdx + 1]) {
+    projectDir = args[dirIdx + 1];
+  }
+
+  // Extract goal text - filter out all flags and their values
+  const flagsWithValues = ['--provider', '-P', '--dir'];
+  const flagsWithoutValues = ['--json'];
+  const goalParts = [];
+  for (let i = 0; i < args.length; i++) {
+    if (flagsWithValues.includes(args[i])) {
+      i++; // skip the flag's value too
+      continue;
+    }
+    if (flagsWithoutValues.includes(args[i])) {
+      continue;
+    }
+    goalParts.push(args[i]);
+  }
+  const goalText = goalParts.join(' ');
+  if (!goalText) {
+    if (jsonMode) {
+      console.log(JSON.stringify({ error: 'missing_goal', usage: 'mem new "<goal>" [--provider c] [--dir /path]' }));
+    } else {
+      console.log(`${c.red}Usage:${c.reset} mem new "<goal>" [--provider c|g|o] [--dir /path]`);
+    }
+    process.exit(1);
+  }
+
+  // Generate task name from goal
+  const taskName = goalText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .slice(0, 3)
+    .join('-');
+
+  const branch = `task/${taskName}`;
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    // Create branch (also initializes central mem if needed)
+    cmdBranch([taskName], memDir);
+
+    // Write goal.md
+    const goalMd = `---
+task: ${taskName}
+created: ${today}
+---
+
+# Goal
+
+${goalText}
+
+## Criteria
+
+- [ ] Define success criteria
+
+## Progress: 0%`;
+    writeMemFile(CENTRAL_MEM, 'goal.md', goalMd);
+
+    // Write state.md with provider
+    const stateMd = `---
+status: active
+provider: ${provider}
+---
+
+# State
+
+## Next Step
+
+Begin work
+
+## Checkpoints
+
+- [ ] Started`;
+    writeMemFile(CENTRAL_MEM, 'state.md', stateMd);
+
+    // Write memory.md
+    writeMemFile(CENTRAL_MEM, 'memory.md', '# Learnings\n\n');
+
+    // Commit
+    git(CENTRAL_MEM, 'add', '-A');
+    git(CENTRAL_MEM, 'commit', '-m', `new: ${taskName}`);
+
+    // Update index mapping (projectDir -> branch)
+    const index = loadIndex();
+    index[projectDir] = branch;
+    saveIndex(index);
+
+    if (jsonMode) {
+      console.log(JSON.stringify({ taskName, branch, projectDir, created: today, goal: goalText, provider }));
+    } else {
+      console.log(`${c.green}✓${c.reset} Created task: ${c.bold}${taskName}${c.reset}`);
+      console.log(`${c.green}✓${c.reset} Provider: ${c.cyan}${provider}${c.reset}`);
+      console.log(`${c.green}✓${c.reset} Mapped: ${c.dim}${projectDir} → ${branch}${c.reset}`);
+    }
+  } catch (err) {
+    if (jsonMode) {
+      console.log(JSON.stringify({ error: err.message }));
+    } else {
+      console.log(`${c.red}Error:${c.reset} ${err.message}`);
+    }
+    process.exit(1);
+  }
+}
+
 function cmdSet(args, memDir) {
   if (!memDir) {
     console.log(`${c.yellow}No .mem repo found.${c.reset}`);
@@ -1963,42 +2183,45 @@ ${c.dim}Docs: https://github.com/ramarlina/memx${c.reset}
 // ==================== MAIN ====================
 
 async function main() {
+  // ============================================================
+  // mem: Git-backed key-value store for AI agents
+  //
+  // Architecture:
+  // - All data stored in central ~/.mem git repo
+  // - Each task is a branch (task/<name>)
+  // - index.json maps project directories to task branches
+  // - agx orchestrator uses mem primitives, never accesses ~/.mem directly
+  // ============================================================
+
   const args = process.argv.slice(2);
   const cmd = args[0];
   const cmdArgs = args.slice(1);
-  
-  // Find .mem repo (returns object with memDir, taskBranch, etc.)
-  const memInfo = findMemDir();
-  let memDir = null;
-  
-  if (memInfo) {
-    memDir = memInfo.memDir;
-    // If central mem with task mapping, ensure we're on the right branch
-    if (!memInfo.isLocal && memInfo.taskBranch) {
-      ensureTaskBranch(memDir, memInfo.taskBranch);
-    }
-  }
-  
-  // No command and no .mem? Start interactive onboarding
-  if (!cmd && !memDir) {
-    await interactiveInit();
-    return;
-  }
-  
-  // No command but has central mem with no mapping for this dir?
-  if (!cmd && memInfo && memInfo.unmapped) {
-    console.log(`${c.dim}No task mapped for this directory.${c.reset}`);
-    const create = await prompt(`Create a new task? [Y/n]: `);
-    if (create.toLowerCase() !== 'n') {
+
+  // Always use central ~/.mem repository
+  // This is the single source of truth for all task data
+  const memDir = CENTRAL_MEM;
+
+  // Initialize central mem if it doesn't exist
+  if (!fs.existsSync(memDir)) {
+    // No command? Start interactive onboarding
+    if (!cmd) {
       await interactiveInit();
+      return;
     }
-    return;
+    // For commands like 'branch', let them handle initialization
   }
-  
-  // No command but has .mem? Show status
-  if (!cmd && memDir) {
-    cmdStatus(memDir);
-    console.log(`${c.dim}Run ${c.reset}mem help${c.dim} for all commands${c.reset}\n`);
+
+  // No command? Show status for current directory's mapped task
+  if (!cmd) {
+    const index = loadIndex();
+    const taskBranch = index[process.cwd()];
+    if (taskBranch) {
+      ensureTaskBranch(memDir, taskBranch);
+      cmdStatus(memDir);
+    } else {
+      console.log(`${c.dim}No task mapped for this directory.${c.reset}`);
+      console.log(`${c.dim}Run ${c.reset}mem branch <name>${c.dim} to create one.${c.reset}`);
+    }
     return;
   }
   
@@ -2011,6 +2234,11 @@ async function main() {
     // Lifecycle
     case 'init':
       await cmdInit(cmdArgs, memDir);
+      break;
+    case 'new':
+      // Create a new task - this is the primary entry point
+      // agx calls: mem new "goal" --provider claude --dir /project/path
+      cmdNew(cmdArgs, memDir);
       break;
     case 'status':
       cmdStatus(memDir);
@@ -2095,6 +2323,14 @@ async function main() {
       break;
       
     // Primitives
+    case 'branch':
+    case 'br':
+      cmdBranch(cmdArgs, memDir);
+      break;
+    case 'commit':
+    case 'ci':
+      cmdCommit(cmdArgs, memDir);
+      break;
     case 'set':
       cmdSet(cmdArgs, memDir);
       break;
@@ -2140,7 +2376,83 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(`${c.red}Error:${c.reset}`, err.message);
-  process.exit(1);
-});
+// Only run main if executed directly (not when required for tests)
+if (require.main === module) {
+  main().catch(err => {
+    console.error(`${c.red}Error:${c.reset}`, err.message);
+    process.exit(1);
+  });
+}
+
+// Export for testing
+module.exports = {
+  // Constants
+  CONFIG_DIR,
+  CONFIG_FILE,
+  CENTRAL_MEM,
+  INDEX_FILE,
+  MEM_SKILL,
+  c,
+
+  // Utility functions
+  loadConfig,
+  saveConfig,
+  prompt,
+  loadIndex,
+  saveIndex,
+  findMemDir,
+  ensureTaskBranch,
+  git,
+  getCurrentBranch,
+  readMemFile,
+  writeMemFile,
+  parseFrontmatter,
+  serializeFrontmatter,
+  parseWakeToCron,
+
+  // Command functions
+  interactiveInit,
+  setupRemote,
+  cmdInit,
+  cmdStatus,
+  cmdGoal,
+  cmdNext,
+  cmdCheckpoint,
+  cmdLearn,
+  cmdContext,
+  cmdTasks,
+  cmdSwitch,
+  cmdSync,
+  cmdHistory,
+  cmdDone,
+  cmdStuck,
+  cmdQuery,
+  cmdPlaybook,
+  cmdLearnings,
+  cmdPromote,
+  cmdConstraint,
+  cmdProgress,
+  cmdCriteria,
+  cmdBranch,
+  cmdCommit,
+  cmdSet,
+  cmdGet,
+  cmdAppend,
+  cmdLog,
+  cmdWake,
+  cmdCronExport,
+  cmdNew,
+
+  // Skill functions
+  isSkillInstalled,
+  installSkillTo,
+  handleSkillCommand,
+
+  // MCP functions
+  startMCPServer,
+  showMCPConfig,
+
+  // Main
+  showHelp,
+  main
+};

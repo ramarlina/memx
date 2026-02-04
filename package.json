@@ -7,7 +7,21 @@
     "mem": "./index.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --coverage",
+    "test:watch": "jest --watch"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "global": {
+        "branches": 70,
+        "functions": 80,
+        "lines": 79,
+        "statements": 79
+      }
+    },
+    "testPathIgnorePatterns": ["/node_modules/"],
+    "coveragePathIgnorePatterns": ["/node_modules/", "/test/"]
   },
   "keywords": [
     "ai",
@@ -23,5 +37,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ramarlina/memx"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0"
   }
 }
